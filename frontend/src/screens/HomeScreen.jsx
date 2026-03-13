@@ -1,22 +1,31 @@
 import React, { useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { Container, Tab, Tabs, Row, Col, Card, Button, Form, ProgressBar, Alert, Badge, ListGroup } from 'react-bootstrap';
+import { Container, Tab, Tabs, Row, Col, Card, Button, Form, ProgressBar, Alert, Badge, ListGroup, Spinner } from 'react-bootstrap';
 import axios from 'axios';
 import Hero from '../components/Hero';
-import { setCredentials } from '../slices/authSlice'; 
+import { setCredentials } from '../slices/authSlice';
 
 const HomeScreen = () => {
   const { userInfo } = useSelector((state) => state.auth);
   const dispatch = useDispatch();
 
-  // --- UI STATES ---
+  // --- CORE UI STATES ---
   const [activeTab, setActiveTab] = useState('skillMatch');
   const [selectedRole, setSelectedRole] = useState('');
   const [matchPercent, setMatchPercent] = useState(0);
   const [missingSkills, setMissingSkills] = useState([]);
   const [manualSkills, setManualSkills] = useState('');
   const [showProfile, setShowProfile] = useState(false);
-  const [dataSource, setDataSource] = useState(''); // Added to show priority source
+
+  // --- GEMINI / JOB MAP STATES ---
+  const [jobInput, setJobInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [geminiResult, setGeminiResult] = useState(null);
+
+  // --- SALARY STATES ---
+  const [salaryRole, setSalaryRole] = useState(''); 
+  const [salaryResult, setSalaryResult] = useState(null);
+  const [salaryLoading, setSalaryLoading] = useState(false);
 
   const jobRequirements = {
     'MERN Developer': ['React', 'Node.js', 'MongoDB', 'Express', 'JavaScript'],
@@ -24,54 +33,93 @@ const HomeScreen = () => {
     'Frontend Developer': ['HTML', 'CSS', 'JavaScript', 'React', 'Tailwind']
   };
 
-  // 🎯 CORE LOGIC: PRIORITY EXTRACTION & ANALYSIS
+  // 🎯 LOGIC: SKILL MATCH & ROADMAP
   const runSkillAnalysis = (role) => {
     setSelectedRole(role);
     if (!role) return;
 
-    // 1. PRIORITY CHECK: Tested > Temporary
+    // Priority Check: Tested Skills > Temporary Skills
     const userTested = userInfo?.testedSkills || [];
     const userTemp = userInfo?.temporarySkills || [];
+    let userSkills = userTested.length > 0 ? userTested : userTemp;
     
-    let userSkills = [];
-    if (userTested.length > 0) {
-      userSkills = userTested;
-      setDataSource('Verified Tested Skills');
-    } else if (userTemp.length > 0) {
-      userSkills = userTemp;
-      setDataSource('Self-Reported Temporary Skills');
-    }
-
-    // 2. IF BOTH ARE EMPTY: Show the fallback UI
-    if (userSkills.length === 0) {
+    if (userSkills.length === 0) { 
       setMatchPercent(-1); 
-      setMissingSkills([]);
-      return;
+      return; 
     }
 
-    // 3. GAP ANALYSIS & CALCULATION
     const required = jobRequirements[role] || [];
     const matched = userSkills.filter(s => 
-        required.some(r => r.toLowerCase() === s.trim().toLowerCase())
+      required.some(r => r.toLowerCase() === s.trim().toLowerCase())
     );
     const missing = required.filter(r => 
-        !userSkills.some(u => u.toLowerCase() === r.toLowerCase())
+      !userSkills.some(u => u.toLowerCase() === r.toLowerCase())
     );
 
     setMatchPercent(Math.round((matched.length / required.length) * 100));
     setMissingSkills(missing);
   };
 
-  // Logic to save manual input to Temporary Skills in DB
+  // 🤖 AI LOGIC: JOB DESCRIPTION ANALYSIS
+  const analyzeJobWithGemini = async () => {
+    if (!jobInput) return alert("Please paste a Job Description!");
+    setLoading(true);
+    try {
+      const prompt = `Extract only the technical skills from this job description and return them as a simple comma-separated list. No prose. Job text: ${jobInput}`;
+      const { data } = await axios.post('/api/gemini/analyze', { prompt });
+      const extractedSkills = data.skills;
+
+      const userSkills = userInfo?.testedSkills?.length > 0 ? userInfo.testedSkills : (userInfo?.temporarySkills || []);
+      const matches = userSkills.filter(s => extractedSkills.some(e => e.toLowerCase() === s.trim().toLowerCase()));
+      const score = Math.round((matches.length / extractedSkills.length) * 100);
+
+      setGeminiResult({
+        score,
+        extracted: extractedSkills,
+        missing: extractedSkills.filter(e => !userSkills.some(u => u.toLowerCase() === e.toLowerCase()))
+      });
+    } catch (err) {
+      alert("Error calling Gemini API. Ensure backend is running.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 💰 AI LOGIC: SALARY ESTIMATOR
+  const estimateSalary = async () => {
+    if (!salaryRole) return alert("Please select a role first!");
+    
+    const userTested = userInfo?.testedSkills || [];
+    const userTemp = userInfo?.temporarySkills || [];
+    const userSkills = userTested.length > 0 ? userTested : userTemp;
+
+    if (userSkills.length === 0) {
+      alert("No skills found! Add skills in the Skill Map tab first.");
+      return;
+    }
+
+    setSalaryLoading(true);
+    try {
+      const prompt = `Act as an Indian Tech Recruiter. Role: "${salaryRole}" | Candidate Skills: [${userSkills.join(', ')}]. Estimate salary in LPA for India in 2026. Format: Range: [X] LPA | Reasoning: [Reason]`;
+      const { data } = await axios.post('/api/gemini/analyze', { prompt });
+      setSalaryResult(data.skills.join(' ')); 
+    } catch (err) {
+      alert("Salary Estimation failed.");
+    } finally {
+      setSalaryLoading(false);
+    }
+  };
+
+  // 💾 LOGIC: SAVE TEMPORARY SKILLS
   const handleSaveManualSkills = async () => {
     const skillsArray = manualSkills.split(',').map(s => s.trim()).filter(s => s !== "");
     try {
       const res = await axios.put('/api/users/profile/skills', { temporarySkills: skillsArray });
       dispatch(setCredentials({ ...res.data }));
-      alert('Skills saved successfully!');
-      runSkillAnalysis(selectedRole); 
-    } catch (err) {
-      alert('Error updating skills. Ensure backend route /api/users/profile/skills is set up.');
+      alert('Skills updated successfully!');
+      if (selectedRole) runSkillAnalysis(selectedRole);
+    } catch (err) { 
+      alert('Update failed.'); 
     }
   };
 
@@ -82,7 +130,7 @@ const HomeScreen = () => {
           <Row className='justify-content-md-center'>
             <Col xs={12} md={11}>
               
-              {/* TOP HEADER SECTION */}
+              {/* HEADER */}
               <div className='d-flex justify-content-between align-items-center mb-4'>
                 <h2>Career Dashboard</h2>
                 <Button variant="outline-dark" onClick={() => setShowProfile(!showProfile)}>
@@ -90,134 +138,110 @@ const HomeScreen = () => {
                 </Button>
               </div>
 
-              {/* PROFILE OVERLAY SECTION */}
+              {/* PROFILE OVERLAY */}
               {showProfile && (
                 <Card className='mb-4 p-4 border-primary shadow-sm bg-light'>
-                  <h4>Your Profile Skills</h4>
                   <Row>
                     <Col md={6}>
-                      <h6>Verified (Tested) Skills <Badge bg="success">Permanent</Badge></h6>
+                      <h6>Verified Skills <Badge bg="success">Permanent</Badge></h6>
                       <div className='p-2 bg-white border rounded' style={{minHeight: '40px'}}>
-                        {userInfo.testedSkills?.length > 0 ? userInfo.testedSkills.join(', ') : 'No tests taken yet.'}
+                        {userInfo.testedSkills?.length > 0 ? userInfo.testedSkills.join(', ') : 'No tests taken.'}
                       </div>
                     </Col>
                     <Col md={6}>
                       <h6>Temporary Skills <Badge bg="warning" text="dark">Editable</Badge></h6>
-                      <Form.Control 
-                        type="text" 
-                        defaultValue={userInfo.temporarySkills?.join(', ')} 
-                        placeholder="Enter skills (comma separated)..."
-                        onChange={(e) => setManualSkills(e.target.value)}
-                      />
+                      <Form.Control type="text" defaultValue={userInfo.temporarySkills?.join(', ')} onChange={(e) => setManualSkills(e.target.value)} />
                       <Button size="sm" className='mt-2' onClick={handleSaveManualSkills}>Save Changes</Button>
                     </Col>
                   </Row>
                 </Card>
               )}
               
-              {/* MAIN NAVIGATION TABS */}
               <Tabs activeKey={activeTab} onSelect={(k) => setActiveTab(k)} className="mb-4 nav-fill shadow-sm">
                 
-                {/* 🎯 SKILL MATCH TAB FEATURE */}
-                <Tab eventKey="skillMatch" title="🎯 Skill Match">
+                {/* 🎯 TAB: SKILL MAP */}
+                <Tab eventKey="skillMatch" title="🎯 Skill Map">
                   <Card className='p-4 border-0 shadow-sm'>
                     <h3 className='mb-3'>Skill Gap Analysis</h3>
-                    
-                    <Form.Group className='mb-4'>
-                      <Form.Label><strong>Select Target Job Role:</strong></Form.Label>
-                      <Form.Select value={selectedRole} onChange={(e) => runSkillAnalysis(e.target.value)}>
-                        <option value="">-- Choose a Role --</option>
-                        {Object.keys(jobRequirements).map(r => <option key={r} value={r}>{r}</option>)}
-                      </Form.Select>
-                    </Form.Group>
+                    <Form.Select className='mb-4' value={selectedRole} onChange={(e) => runSkillAnalysis(e.target.value)}>
+                      <option value="">-- Choose a Role --</option>
+                      {Object.keys(jobRequirements).map(r => <option key={r} value={r}>{r}</option>)}
+                    </Form.Select>
 
                     {selectedRole && (
-                      <>
-                        {/* FALLBACK UI: NO DATA IN DB */}
-                        {matchPercent === -1 ? (
-                          <Alert variant="warning" className='border-0 shadow-sm'>
-                            <h5>No Skills Found on Profile</h5>
-                            <p>We checked your Tested and Temporary records but found nothing. Proceed with one of these:</p>
-                            <Form.Control 
-                              className='mb-2' 
-                              placeholder="1. Enter skills manually (e.g. React, Python)" 
-                              onChange={(e) => setManualSkills(e.target.value)}
-                            />
-                            <div className='d-flex gap-2 mt-3'>
-                              <Button variant="primary" onClick={handleSaveManualSkills}>Save & Analyze</Button>
-                              <Button variant="outline-primary" onClick={() => setActiveTab('takeTest')}>2. Take Skill Test</Button>
-                            </div>
-                          </Alert>
-                        ) : (
-                          /* RESULTS UI: VISUALIZATION & GAP ANALYSIS */
-                          <div className="mt-2 animate__animated animate__fadeIn">
-                            <div className='d-flex justify-content-between mb-2'>
-                              <h5>{selectedRole} Readiness Score</h5>
-                              <span className='fw-bold text-primary'>{matchPercent}%</span>
-                            </div>
-                            
-                            {/* HORIZONTAL BAR VISUALIZATION */}
-                            <ProgressBar 
-                              now={matchPercent} 
-                              variant={matchPercent > 75 ? "success" : matchPercent > 40 ? "warning" : "danger"} 
-                              style={{height: '35px', borderRadius: '15px'}}
-                              label={`${matchPercent}%`}
-                              animated 
-                            />
-                            <small className='text-muted mt-2 d-block'>Source: {dataSource}</small>
-
-                            <Row className='mt-4'>
-                              {/* MISSING SKILLS LIST */}
-                              <Col md={6}>
-                                <Card className='p-3 h-100 border-0 bg-light shadow-sm'>
-                                  <h6>🚩 Missing Skills</h6>
-                                  <div className='d-flex flex-wrap gap-2 mt-2'>
-                                    {missingSkills.length > 0 ? (
-                                      missingSkills.map(s => <Badge key={s} bg="danger" className='p-2'>{s}</Badge>)
-                                    ) : (
-                                      <Badge bg="success" className='p-2'>No Gaps Found!</Badge>
-                                    )}
-                                  </div>
-                                </Card>
-                              </Col>
-
-                              {/* AUTOMATIC ROADMAP */}
-                              <Col md={6}>
-                                <Card className='p-3 h-100 border-primary shadow-sm'>
-                                  <h6>🚀 Learning Roadmap</h6>
-                                  <ListGroup variant="flush" className='mt-2'>
-                                    {missingSkills.length > 0 ? (
-                                      missingSkills.map((skill, i) => (
-                                        <ListGroup.Item key={skill} className='p-1 border-0 bg-transparent'>
-                                          <small><b>Phase {i+1}:</b> Master {skill}</small>
-                                        </ListGroup.Item>
-                                      ))
-                                    ) : (
-                                      <ListGroup.Item className='border-0 bg-transparent text-success'>Ready for Interviews!</ListGroup.Item>
-                                    )}
-                                  </ListGroup>
-                                </Card>
-                              </Col>
-                            </Row>
+                      matchPercent === -1 ? (
+                        <Alert variant="warning" className="border-0 shadow-sm">
+                          <h5>No Skills Found!</h5>
+                          <Form.Control type="text" placeholder="Enter skills (e.g. React, Node.js)..." onChange={(e) => setManualSkills(e.target.value)} />
+                          <div className='mt-3 d-flex gap-2'>
+                            <Button variant="primary" onClick={handleSaveManualSkills}>Save & Analyze</Button>
+                            <Button variant="outline-primary" onClick={() => setActiveTab('takeTest')}>Take Test</Button>
                           </div>
-                        )}
-                      </>
+                        </Alert>
+                      ) : (
+                        <div className="animate__animated animate__fadeIn">
+                          <h5>{selectedRole} Score: {matchPercent}%</h5>
+                          <ProgressBar now={matchPercent} variant={matchPercent > 70 ? "success" : "warning"} animated style={{height: '25px', borderRadius: '12px'}} className='mb-4' />
+                          <Row>
+                            <Col md={6}>
+                              <Card className='p-3 h-100 border-0 bg-light'>
+                                <h6>🚩 Skills You Lack:</h6>
+                                {missingSkills.length > 0 ? missingSkills.map(s => <Badge key={s} bg="danger" className='m-1 p-2'>{s}</Badge>) : <Badge bg="success">Ready!</Badge>}
+                              </Card>
+                            </Col>
+                            <Col md={6}>
+                              <Card className='p-3 h-100 border-primary'>
+                                <h6>🚀 Learning Roadmap</h6>
+                                <ListGroup variant="flush">
+                                  {missingSkills.map((s, i) => (
+                                    <ListGroup.Item key={s} className='bg-transparent border-0'><small><b>Phase {i+1}:</b> Master {s}</small></ListGroup.Item>
+                                  ))}
+                                </ListGroup>
+                              </Card>
+                            </Col>
+                          </Row>
+                        </div>
+                      )
                     )}
                   </Card>
                 </Tab>
 
-                <Tab eventKey="takeTest" title="📝 Take Test">
-                  <Card className='p-4 border-0 shadow-sm'><h3>Testing Center</h3><p>Verify your skills here to move them to permanent status.</p></Card>
+                {/* 📍 TAB: JOB MAP */}
+                <Tab eventKey="jobMap" title="📍 Job Map (AI)">
+                  <Card className='p-4 border-0 shadow-sm'>
+                    <h3>AI Job Analyzer</h3>
+                    <Form.Control as="textarea" rows={4} className="mb-3" placeholder="Paste Job Description..." value={jobInput} onChange={(e) => setJobInput(e.target.value)} />
+                    <Button variant="primary" onClick={analyzeJobWithGemini} disabled={loading}>{loading ? <Spinner size="sm" animation="border" /> : 'Analyze with Gemini'}</Button>
+                    {geminiResult && (
+                      <Alert className='mt-3' variant="info">
+                        <h4>Match Score: {geminiResult.score}%</h4>
+                        <ProgressBar now={geminiResult.score} variant="success" className="mb-2" />
+                        <small><strong>Missing Skills:</strong> {geminiResult.missing.join(', ')}</small>
+                      </Alert>
+                    )}
+                  </Card>
                 </Tab>
-                <Tab eventKey="jobMap" title="📍 Job Map">
-                  <Card className='p-4 border-0 shadow-sm'><h3>Job Map Visualization</h3><p>Finding opportunities in Visakhapatnam...</p></Card>
-                </Tab>
+
+                {/* 💰 TAB: SALARY ESTIMATOR */}
                 <Tab eventKey="salaryEstimator" title="💰 Salary">
-                  <Card className='p-4 border-0 shadow-sm'><h3>Estimator</h3></Card>
+                  <Card className='p-4 border-0 shadow-sm'>
+                    <h3>AI Salary Estimator</h3>
+                    <Form.Select className='mb-3' value={salaryRole} onChange={(e) => setSalaryRole(e.target.value)}>
+                      <option value="">-- Choose Role --</option>
+                      {Object.keys(jobRequirements).map(r => <option key={r} value={r}>{r}</option>)}
+                    </Form.Select>
+                    <Button variant="success" onClick={estimateSalary} disabled={salaryLoading || !salaryRole} className="w-100">{salaryLoading ? <Spinner size="sm" /> : 'Calculate My Worth'}</Button>
+                    {salaryResult && (
+                      <Alert variant="info" className="mt-4">
+                        <div style={{fontSize: '1.2rem'}}><strong>{salaryResult.split('|')[0]}</strong></div>
+                        <p className='mt-2 mb-0 small'><strong>Why:</strong> {salaryResult.split('|')[1]?.replace('Reasoning:', '')}</p>
+                      </Alert>
+                    )}
+                  </Card>
                 </Tab>
-                <Tab eventKey="aiCoach" title="🤖 AI Coach">
-                  <Card className='p-4 border-0 shadow-sm bg-dark text-white'><h3>AI Coach</h3></Card>
-                </Tab>
+
+                <Tab eventKey="takeTest" title="📝 Take Test"><Card className='p-4'>Assessment Center</Card></Tab>
+                <Tab eventKey="aiCoach" title="🤖 AI Coach"><Card className='p-4 bg-dark text-white'>AI Career Coach</Card></Tab>
               </Tabs>
             </Col>
           </Row>
