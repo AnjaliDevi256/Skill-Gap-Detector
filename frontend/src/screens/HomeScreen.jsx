@@ -4,7 +4,7 @@ import { Container, Tab, Tabs, Row, Col, Card, Button, Form, ProgressBar, Alert,
 import axios from 'axios';
 import Hero from '../components/Hero';
 import { setCredentials } from '../slices/authSlice';
-
+import TestScreen from './TestScreen';
 const HomeScreen = () => {
   const { userInfo } = useSelector((state) => state.auth);
   const dispatch = useDispatch();
@@ -16,7 +16,7 @@ const HomeScreen = () => {
   const [missingSkills, setMissingSkills] = useState([]);
   const [manualSkills, setManualSkills] = useState('');
   const [showProfile, setShowProfile] = useState(false);
-
+  const [dataSource, setDataSource] = useState('');
   // --- GEMINI / JOB MAP STATES ---
   const [jobInput, setJobInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -240,7 +240,11 @@ const HomeScreen = () => {
                   </Card>
                 </Tab>
 
-                <Tab eventKey="takeTest" title="📝 Take Test"><Card className='p-4'>Assessment Center</Card></Tab>
+                <Tab eventKey="takeTest" title="📝 Take Test">
+                  <div className="animate_animated animate_fadeIn">
+                    <TestScreen />
+                  </div>
+                </Tab>
                 <Tab eventKey="aiCoach" title="🤖 AI Coach"><Card className='p-4 bg-dark text-white'>AI Career Coach</Card></Tab>
               </Tabs>
             </Col>
