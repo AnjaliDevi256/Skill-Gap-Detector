@@ -17,6 +17,8 @@ const authUser = asyncHandler(async (req, res) => {
       _id: user._id,
       name: user.name,
       email: user.email,
+      testedSkills: user.testedSkills || [],
+      temporarySkills: user.temporarySkills || [],
     });
   } else {
     res.status(401);
@@ -41,6 +43,8 @@ const registerUser = asyncHandler(async (req, res) => {
     name,
     email,
     password,
+    testedSkills: [],
+    temporarySkills: [],
   });
 
   if (user) {
@@ -50,6 +54,8 @@ const registerUser = asyncHandler(async (req, res) => {
       _id: user._id,
       name: user.name,
       email: user.email,
+      testedSkills: user.testedSkills,
+      temporarySkills: user.temporarySkills,
     });
   } else {
     res.status(400);
@@ -79,6 +85,8 @@ const getUserProfile = asyncHandler(async (req, res) => {
       _id: user._id,
       name: user.name,
       email: user.email,
+      testedSkills: user.testedSkills,
+      temporarySkills: user.temporarySkills,
     });
   } else {
     res.status(404);
@@ -106,16 +114,45 @@ const updateUserProfile = asyncHandler(async (req, res) => {
       _id: updatedUser._id,
       name: updatedUser.name,
       email: updatedUser.email,
+      testedSkills: updatedUser.testedSkills,
+      temporarySkills: updatedUser.temporarySkills,
     });
   } else {
     res.status(404);
     throw new Error('User not found');
   }
 });
+
+// @desc    Update user skills (Priority: Temporary)
+// @route   PUT /api/users/profile/skills
+// @access  Private
+const updateUserSkills = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+
+  if (user) {
+    // Logic: Only update the temporarySkills array
+    user.temporarySkills = req.body.temporarySkills || user.temporarySkills;
+
+    const updatedUser = await user.save();
+
+    res.json({
+      _id: updatedUser._id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      testedSkills: updatedUser.testedSkills,
+      temporarySkills: updatedUser.temporarySkills,
+    });
+  } else {
+    res.status(404);
+    throw new Error('User not found');
+  }
+});
+
 export {
   authUser,
   registerUser,
   logoutUser,
   getUserProfile,
   updateUserProfile,
+  updateUserSkills,
 };

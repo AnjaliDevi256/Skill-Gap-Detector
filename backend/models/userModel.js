@@ -16,6 +16,14 @@ const userSchema = mongoose.Schema(
       type: String,
       required: true,
     },
+    testedSkills: {
+      type: [String], // Array of strings (e.g., ['React', 'Node.js'])
+      default: [],
+    },
+    temporarySkills: {
+      type: [String],
+      default: [],
+    },
   },
   {
     timestamps: true,
